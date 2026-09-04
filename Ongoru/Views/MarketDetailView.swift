@@ -125,7 +125,7 @@ struct MarketDetailView: View {
 
     private func chartBlock(_ m: Market) -> some View {
         VStack(spacing: 10) {
-            PriceChart(points: visiblePoints(m), color: m.change24h >= 0 ? Palette.yes : Palette.no)
+            PriceChart(points: visiblePoints(m), color: rangeTrend(m) >= 0 ? Palette.yes : Palette.no)
                 .frame(height: 168)
             Picker("", selection: $range) {
                 ForEach(Range.allCases) { Text($0.rawValue).tag($0) }
@@ -133,6 +133,13 @@ struct MarketDetailView: View {
             .pickerStyle(.segmented)
         }
         .card(padding: 12)
+    }
+
+    /// Seçili aralıktaki eğim — grafiğin rengi bununla belirlenir.
+    private func rangeTrend(_ m: Market) -> Double {
+        let pts = visiblePoints(m)
+        guard let first = pts.first, let last = pts.last else { return 0 }
+        return last.p - first.p
     }
 
     private func visiblePoints(_ m: Market) -> [PricePoint] {

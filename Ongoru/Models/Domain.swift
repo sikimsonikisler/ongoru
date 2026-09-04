@@ -129,6 +129,19 @@ struct Market: Identifiable, Codable, Hashable {
         return (last.p - ref.p) * 100
     }
 
+    /// Kartlardaki mini grafiğin gösterdiği son dilim
+    func recentSlice(_ count: Int = 48) -> [PricePoint] {
+        Array(history.suffix(count))
+    }
+
+    /// O dilimin kendi içindeki eğimi — mini grafiğin rengi buradan gelir,
+    /// böylece çizginin yönü ile rengi hep aynı şeyi söyler.
+    func sliceTrend(_ count: Int = 48) -> Double {
+        let slice = recentSlice(count)
+        guard let first = slice.first, let last = slice.last else { return 0 }
+        return (last.p - first.p) * 100
+    }
+
     func changeSince(_ interval: TimeInterval) -> Double {
         guard let last = history.last else { return 0 }
         let cutoff = last.t.addingTimeInterval(-interval)

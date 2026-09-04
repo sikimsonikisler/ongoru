@@ -144,7 +144,7 @@ struct IndexView: View {
                 }
                 Spacer(minLength: 6)
                 Sparkline(points: Array(t.series.suffix(36)),
-                          color: t.delta >= 0 ? Palette.yes : Palette.no, lineWidth: 1.3)
+                          color: seriesTrend(t) >= 0 ? Palette.yes : Palette.no, lineWidth: 1.3)
                     .frame(width: 54, height: 22)
                 Text(Fmt.signedDecimal(t.delta, decimals: 0) + "p")
                     .font(.mono(13, .bold))
@@ -154,6 +154,12 @@ struct IndexView: View {
             .card(padding: 12)
         }
         .buttonStyle(.plain)
+    }
+
+    private func seriesTrend(_ t: IndexTheme) -> Double {
+        let slice = Array(t.series.suffix(36))
+        guard let first = slice.first, let last = slice.last else { return t.delta }
+        return last.p - first.p
     }
 
     // MARK: Kategori nabzı

@@ -238,8 +238,8 @@ struct MarketCard: View {
                         .font(.system(size: 10)).foregroundStyle(Palette.faint)
                 }
                 Spacer()
-                Sparkline(points: Array(market.history.suffix(48)),
-                          color: market.change24h >= 0 ? Palette.yes : Palette.no)
+                Sparkline(points: market.recentSlice(),
+                          color: market.sliceTrend() >= 0 ? Palette.yes : Palette.no)
                     .frame(width: 92, height: 34)
             }
 
