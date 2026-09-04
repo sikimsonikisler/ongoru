@@ -342,7 +342,7 @@ struct SectionHeader: View {
     var title: String
     var sub: String? = nil
     var action: (() -> Void)? = nil
-    var actionLabel: String = "Tümü"
+    var actionLabel: String = L("Tümü", "All")
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {

@@ -8,10 +8,20 @@ struct MarketDetailView: View {
     @State private var tradeSide: Side? = nil
     @State private var showComposer = false
     @State private var showCriteria = false
+    @State private var confirmClose = false
+    @State private var reportTarget: String? = nil
 
     enum Range: String, CaseIterable, Identifiable {
-        case gun = "1G", hafta = "1H", ay = "1A", tum = "Tümü"
+        case gun, hafta, ay, tum
         var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .gun:   return L("1G", "1D")
+            case .hafta: return L("1H", "1W")
+            case .ay:    return L("1A", "1M")
+            case .tum:   return L("Tümü", "All")
+            }
+        }
         var interval: TimeInterval? {
             switch self {
             case .gun: return 86_400
@@ -29,29 +39,58 @@ struct MarketDetailView: View {
             if let market {
                 content(market)
             } else {
-                EmptyState(icon: "questionmark.circle", title: "Piyasa bulunamadı", message: "")
+                EmptyState(icon: "questionmark.circle",
+                           title: L("Piyasa bulunamadı", "Market not found"), message: "")
             }
         }
         .background(Palette.bg)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    store.toggleWatch(marketId)
+                Menu {
+                    Button {
+                        store.toggleWatch(marketId)
+                    } label: {
+                        Label(store.isWatched(marketId)
+                              ? L("Takipten çıkar", "Remove from watchlist")
+                              : L("Takibe al", "Add to watchlist"),
+                              systemImage: store.isWatched(marketId) ? "bookmark.slash" : "bookmark")
+                    }
+                    if let market {
+                        ShareLink(item: shareText(market)) {
+                            Label(L("Paylaş", "Share"), systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    Divider()
+                    Button(role: .destructive) {
+                        reportTarget = marketId
+                    } label: {
+                        Label(L("Bildir", "Report"), systemImage: "flag")
+                    }
                 } label: {
-                    Image(systemName: store.isWatched(marketId) ? "bookmark.fill" : "bookmark")
-                        .foregroundStyle(store.isWatched(marketId) ? Palette.gold : Palette.muted)
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 15, weight: .semibold))
                 }
+                .accessibilityLabel(L("Daha fazla", "More"))
             }
         }
         .sheet(item: $tradeSide) { side in
-            TradeSheet(marketId: marketId, initialSide: side)
-                .environmentObject(store)
+            TradeSheet(marketId: marketId, initialSide: side).environmentObject(store)
         }
         .sheet(isPresented: $showComposer) {
-            ThesisComposerView(marketId: marketId)
-                .environmentObject(store)
+            ThesisComposerView(marketId: marketId).environmentObject(store)
         }
+        .sheet(item: Binding(get: { reportTarget.map { ReportTarget(id: $0) } },
+                             set: { reportTarget = $0?.id })) { target in
+            ReportSheet(targetKind: "market", targetId: target.id).environmentObject(store)
+        }
+    }
+
+    struct ReportTarget: Identifiable { var id: String }
+
+    private func shareText(_ m: Market) -> String {
+        L("“\(m.question.s)” — kalabalık \(Fmt.pctInt(m.centsYes)) diyor. Öngörü'de tahminini yaz.",
+          "“\(m.question.s)” — the crowd says \(Fmt.pctInt(m.centsYes)). Make your call on Öngörü.")
     }
 
     @ViewBuilder
@@ -61,7 +100,11 @@ struct MarketDetailView: View {
                 headline(market)
                 chartBlock(market)
                 if market.isTradable {
-                    YesNoButtons(market: market) { tradeSide = $0 }
+                    YesNoButtons(market: market) { side in
+                        Haptics.tap()
+                        tradeSide = side
+                    }
+                    spreadRow(market)
                 } else {
                     resolvedBanner(market)
                 }
@@ -81,15 +124,20 @@ struct MarketDetailView: View {
 
     private func headline(_ m: Market) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            HStack(spacing: 7) {
                 CategoryBadge(category: m.category)
+                if m.origin == .community, let author = m.authorName {
+                    Text(L("\(author) açtı", "opened by \(author)"))
+                        .font(.system(size: 10)).foregroundStyle(Palette.gold)
+                }
                 Spacer()
                 Text(m.status == .resolved
-                     ? "sonuçlandı"
-                     : (m.daysLeft == 0 ? Fmt.kalan(m.closeDate) : Fmt.kalan(m.closeDate) + " kaldı"))
+                     ? L("sonuçlandı", "resolved")
+                     : (m.daysLeft == 0 ? Fmt.kalan(m.closeDate)
+                        : L("\(Fmt.kalan(m.closeDate)) kaldı", "\(Fmt.kalan(m.closeDate)) left")))
                     .font(.system(size: 11)).foregroundStyle(Palette.faint)
             }
-            Text(m.question)
+            Text(m.question.s)
                 .font(.system(size: 19, weight: .bold))
                 .foregroundStyle(Palette.text)
                 .fixedSize(horizontal: false, vertical: true)
@@ -97,26 +145,27 @@ struct MarketDetailView: View {
             HStack(alignment: .firstTextBaseline, spacing: 9) {
                 Text("\(m.centsYes)¢")
                     .font(.mono(38, .bold))
-                    .foregroundStyle(m.change24h >= 0 ? Palette.yes : Palette.no)
+                    .foregroundStyle(m.sliceTrend() >= 0 ? Palette.yes : Palette.no)
                     .contentTransition(.numericText())
                 if m.status == .resolved {
-                    Text("kapanış fiyatı").font(.system(size: 10))
-                        .foregroundStyle(Palette.faint)
+                    Text(L("kapanış fiyatı", "closing price"))
+                        .font(.system(size: 10)).foregroundStyle(Palette.faint)
                 } else {
                     VStack(alignment: .leading, spacing: 1) {
                         ChangeTag(value: m.change24h)
-                        Text("son 24 saat").font(.system(size: 9)).foregroundStyle(Palette.faint)
+                        Text(L("son 24 saat", "last 24 hours"))
+                            .font(.system(size: 9)).foregroundStyle(Palette.faint)
                     }
                 }
                 Spacer()
             }
             ProbabilityBar(p: m.priceYes)
             HStack {
-                Text("EVET %\(m.centsYes)").font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Palette.yes)
+                Text("\(Side.yes.title) \(Fmt.pctInt(m.centsYes))")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.yes)
                 Spacer()
-                Text("HAYIR %\(m.centsNo)").font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Palette.no)
+                Text("\(Side.no.title) \(Fmt.pctInt(m.centsNo))")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.no)
             }
         }
     }
@@ -125,17 +174,18 @@ struct MarketDetailView: View {
 
     private func chartBlock(_ m: Market) -> some View {
         VStack(spacing: 10) {
-            PriceChart(points: visiblePoints(m), color: rangeTrend(m) >= 0 ? Palette.yes : Palette.no)
+            PriceChart(points: visiblePoints(m),
+                       color: rangeTrend(m) >= 0 ? Palette.yes : Palette.no)
                 .frame(height: 168)
+                .accessibilityLabel(L("Fiyat grafiği", "Price chart"))
             Picker("", selection: $range) {
-                ForEach(Range.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(Range.allCases) { Text($0.label).tag($0) }
             }
             .pickerStyle(.segmented)
         }
         .card(padding: 12)
     }
 
-    /// Seçili aralıktaki eğim — grafiğin rengi bununla belirlenir.
     private func rangeTrend(_ m: Market) -> Double {
         let pts = visiblePoints(m)
         guard let first = pts.first, let last = pts.last else { return 0 }
@@ -149,6 +199,21 @@ struct MarketDetailView: View {
         return subset.count >= 2 ? subset : Array(m.history.suffix(2))
     }
 
+    // MARK: Alış / satış farkı
+
+    private func spreadRow(_ m: Market) -> some View {
+        let s = m.spread()
+        return HStack(spacing: 0) {
+            StatTile(label: L("Alış", "Bid"), value: Fmt.cents(s.bid), accent: Palette.muted)
+            StatTile(label: L("Satış", "Ask"), value: Fmt.cents(s.ask), accent: Palette.muted)
+            StatTile(label: L("Fark", "Spread"),
+                     value: Fmt.decimal((s.ask - s.bid) * 100, decimals: 1) + "¢",
+                     accent: Palette.muted,
+                     sub: L("50 sözleşmede", "at 50 contracts"))
+        }
+        .card(padding: 12)
+    }
+
     // MARK: Çözümlenmiş bant
 
     private func resolvedBanner(_ m: Market) -> some View {
@@ -158,10 +223,11 @@ struct MarketDetailView: View {
                 .font(.system(size: 17))
                 .foregroundStyle(outcome ? Palette.yes : Palette.no)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Sonuç: \(outcome ? "EVET" : "HAYIR")")
+                Text(L("Sonuç: ", "Result: ") + (outcome ? Side.yes.title : Side.no.title))
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(outcome ? Palette.yes : Palette.no)
-                Text(m.resolvedAt.map { "Çözüm tarihi " + Fmt.shortDate($0) } ?? "")
+                Text(m.resolvedAt.map { L("Çözüm tarihi \(Fmt.shortDate($0))",
+                                          "Resolved on \(Fmt.shortDate($0))") } ?? "")
                     .font(.system(size: 11)).foregroundStyle(Palette.muted)
             }
             Spacer()
@@ -176,33 +242,48 @@ struct MarketDetailView: View {
         let pnl = pos.pnl(at: m)
         return VStack(alignment: .leading, spacing: 11) {
             HStack {
-                Text("POZİSYONUN").font(.system(size: 9, weight: .bold)).kerning(0.7)
+                Text(L("POZİSYONUN", "YOUR POSITION"))
+                    .font(.system(size: 9, weight: .bold)).kerning(0.7)
                     .foregroundStyle(Palette.faint)
                 Spacer()
-                Text(side.title).font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(side.color)
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(side.dimColor).clipShape(Capsule())
+                HStack(spacing: 3) {
+                    Image(systemName: side.glyph).font(.system(size: 8, weight: .bold))
+                    Text(side.title).font(.system(size: 10, weight: .bold))
+                }
+                .foregroundStyle(side.color)
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background(side.dimColor).clipShape(Capsule())
             }
             HStack(spacing: 0) {
-                StatTile(label: "Sözleşme", value: Fmt.puan(pos.shares))
-                StatTile(label: "Ort. maliyet", value: Fmt.cents(pos.avgPrice(for: side)))
-                StatTile(label: "Değer", value: Fmt.puan(pos.value(at: m)))
-                StatTile(label: "K/Z", value: Fmt.signed(pnl),
+                StatTile(label: L("Sözleşme", "Contracts"), value: Fmt.puan(pos.shares))
+                StatTile(label: L("Ort. maliyet", "Avg cost"), value: Fmt.cents(pos.avgPrice(for: side)))
+                StatTile(label: L("Değer", "Value"), value: Fmt.puan(pos.value(at: m)))
+                StatTile(label: L("K/Z", "P&L"), value: Fmt.signed(pnl),
                          accent: pnl >= 0 ? Palette.yes : Palette.no)
             }
             HStack(spacing: 8) {
                 Button {
                     store.closePosition(marketId: marketId, fraction: 0.5)
-                } label: { smallButton("Yarısını sat", Palette.muted) }
+                } label: { smallButton(L("Yarısını sat", "Sell half"), Palette.muted) }
                 Button {
-                    store.closePosition(marketId: marketId)
-                } label: { smallButton("Pozisyonu kapat", Palette.no) }
+                    confirmClose = true
+                } label: { smallButton(L("Pozisyonu kapat", "Close position"), Palette.no) }
             }
-            Text("Kazanırsan \(Fmt.puan(pos.shares * 100)) puan ödenir.")
+            Text(L("Kazanırsan \(Fmt.puan(pos.shares * 100)) puan ödenir.",
+                   "Pays \(Fmt.puan(pos.shares * 100)) points if you're right."))
                 .font(.system(size: 10)).foregroundStyle(Palette.faint)
         }
         .card()
+        .confirmationDialog(L("Pozisyonu tamamen kapat?", "Close the whole position?"),
+                            isPresented: $confirmClose, titleVisibility: .visible) {
+            Button(L("Kapat", "Close"), role: .destructive) {
+                store.closePosition(marketId: marketId)
+            }
+            Button(L("Vazgeç", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(L("Güncel fiyattan satılır; sonuç açıklanmadan çıktığın için ödeme almazsın.",
+                   "Sold at the current price. You exit before resolution, so you receive no payout."))
+        }
     }
 
     private func smallButton(_ title: String, _ color: Color) -> some View {
@@ -219,10 +300,11 @@ struct MarketDetailView: View {
 
     private func statsGrid(_ m: Market) -> some View {
         HStack(spacing: 0) {
-            StatTile(label: "İşlem", value: Fmt.compact(m.volume))
-            StatTile(label: "Katılımcı", value: Fmt.compact(m.participants))
-            StatTile(label: "Kapanış", value: Fmt.shortDate(m.closeDate))
-            StatTile(label: "7 gün", value: Fmt.signedDecimal(m.changeSince(7 * 86_400)) + "p",
+            StatTile(label: L("İşlem", "Trades"), value: Fmt.compact(m.volume))
+            StatTile(label: L("Katılımcı", "Traders"), value: Fmt.compact(m.participants))
+            StatTile(label: L("Kapanış", "Closes"), value: Fmt.shortDate(m.closeDate))
+            StatTile(label: L("7 gün", "7 days"),
+                     value: Fmt.signedDecimal(m.changeSince(7 * 86_400)) + "p",
                      accent: m.changeSince(7 * 86_400) >= 0 ? Palette.yes : Palette.no)
         }
         .card()
@@ -234,7 +316,8 @@ struct MarketDetailView: View {
         VStack(alignment: .leading, spacing: 9) {
             Button { withAnimation(.easeInOut(duration: 0.2)) { showCriteria.toggle() } } label: {
                 HStack {
-                    Text("Çözüm kriteri").font(.system(size: 13, weight: .semibold))
+                    Text(L("Çözüm kriteri", "Resolution criteria"))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Palette.text)
                     Spacer()
                     Image(systemName: showCriteria ? "chevron.up" : "chevron.down")
@@ -243,12 +326,12 @@ struct MarketDetailView: View {
             }
             .buttonStyle(.plain)
             if showCriteria {
-                Text(m.detail)
+                Text(m.detail.s)
                     .font(.system(size: 12)).foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 5) {
                     Image(systemName: "link").font(.system(size: 9))
-                    Text(m.resolutionSource).font(.system(size: 11, weight: .medium))
+                    Text(m.resolutionSource.s).font(.system(size: 11, weight: .medium))
                 }
                 .foregroundStyle(Palette.accent)
             }
@@ -263,10 +346,11 @@ struct MarketDetailView: View {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles").font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Palette.accent)
-                Text("Öngörü Asistanı").font(.system(size: 13, weight: .bold))
+                Text(L("Öngörü Asistanı", "Öngörü Assistant"))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(Palette.text)
                 Spacer()
-                Text("cihaz üstü").font(.system(size: 9))
+                Text(L("cihaz üstü", "on-device")).font(.system(size: 9))
                     .foregroundStyle(Palette.faint)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Palette.surfaceHigh).clipShape(Capsule())
@@ -281,11 +365,17 @@ struct MarketDetailView: View {
     private func thesesSection(_ m: Market) -> some View {
         let list = store.theses(for: marketId)
         return VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Gerekçeler", sub: "\(list.count) katılımcı neden böyle düşündüğünü yazdı")
-            Button { showComposer = true } label: {
+            SectionHeader(title: L("Gerekçeler", "Rationales"),
+                          sub: L("\(list.count) katılımcı neden böyle düşündüğünü yazdı",
+                                 "\(list.count) traders explained their reasoning"))
+            Button {
+                Haptics.tap()
+                showComposer = true
+            } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "square.and.pencil").font(.system(size: 12, weight: .semibold))
-                    Text("Gerekçeni yaz").font(.system(size: 13, weight: .semibold))
+                    Text(L("Gerekçeni yaz", "Write your rationale"))
+                        .font(.system(size: 13, weight: .semibold))
                     Spacer()
                     Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
                 }
@@ -297,7 +387,8 @@ struct MarketDetailView: View {
             .buttonStyle(.plain)
 
             if list.isEmpty {
-                Text("Henüz gerekçe yok. İlk yazan sen ol.")
+                Text(L("Henüz gerekçe yok. İlk yazan sen ol.",
+                       "No rationales yet. Be the first."))
                     .font(.system(size: 12)).foregroundStyle(Palette.faint)
                     .padding(.vertical, 8)
             } else {
@@ -313,6 +404,7 @@ struct ThesisCard: View {
     @EnvironmentObject var store: AppStore
     var thesis: Thesis
     @State private var expanded = false
+    @State private var showReport = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -322,7 +414,8 @@ struct ThesisCard: View {
                     Text(thesis.authorName).font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Palette.text)
                     HStack(spacing: 5) {
-                        Text("Skor \(thesis.authorScore)").font(.mono(10, .semibold))
+                        Text(L("Skor \(thesis.authorScore)", "Score \(thesis.authorScore)"))
+                            .font(.mono(10, .semibold))
                             .foregroundStyle(thesis.authorScore >= 70 ? Palette.yes : Palette.muted)
                         Text("·").foregroundStyle(Palette.faint)
                         Text(Fmt.relative(thesis.date)).font(.system(size: 10))
@@ -331,16 +424,30 @@ struct ThesisCard: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(thesis.side.title).font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(thesis.side.color)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(thesis.side.dimColor).clipShape(Capsule())
-                    Text("\(Fmt.cents(thesis.priceAtPost))'ten")
+                    HStack(spacing: 3) {
+                        Image(systemName: thesis.side.glyph).font(.system(size: 7, weight: .bold))
+                        Text(thesis.side.title).font(.system(size: 9, weight: .bold))
+                    }
+                    .foregroundStyle(thesis.side.color)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(thesis.side.dimColor).clipShape(Capsule())
+                    Text(L("\(Fmt.cents(thesis.priceAtPost))'ten", "from \(Fmt.cents(thesis.priceAtPost))"))
                         .font(.mono(9, .medium)).foregroundStyle(Palette.faint)
                 }
             }
 
-            Text(thesis.text)
+            if thesis.underReview {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9))
+                    Text(L("İncelemede", "Under review")).font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundStyle(Palette.gold)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(Palette.gold.opacity(0.12))
+                .clipShape(Capsule())
+            }
+
+            Text(thesis.text.s)
                 .font(.system(size: 13))
                 .foregroundStyle(Palette.text.opacity(0.88))
                 .lineLimit(expanded ? nil : 3)
@@ -353,7 +460,7 @@ struct ThesisCard: View {
                         HStack(spacing: 6) {
                             Image(systemName: "doc.text").font(.system(size: 9))
                                 .foregroundStyle(Palette.faint)
-                            Text(s.title).font(.system(size: 11))
+                            Text(s.title.s).font(.system(size: 11))
                                 .foregroundStyle(Palette.muted)
                         }
                     }
@@ -374,17 +481,28 @@ struct ThesisCard: View {
                     .foregroundStyle(thesis.iUpvoted ? Palette.accent : Palette.muted)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(L("Beğen", "Upvote"))
 
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.shield").font(.system(size: 10))
-                    Text("Kalite \(thesis.quality)/100 · \(ThesisAnalyzer.qualityLabel(thesis.quality))")
+                    Text(L("Kalite \(thesis.quality)/100 · \(ThesisAnalyzer.qualityLabel(thesis.quality))",
+                           "Quality \(thesis.quality)/100 · \(ThesisAnalyzer.qualityLabel(thesis.quality))"))
                         .font(.system(size: 10))
                 }
                 .foregroundStyle(qualityColor)
                 Spacer()
+                Button { showReport = true } label: {
+                    Image(systemName: "flag").font(.system(size: 11))
+                        .foregroundStyle(Palette.faint)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L("Bildir", "Report"))
             }
         }
         .card()
+        .sheet(isPresented: $showReport) {
+            ReportSheet(targetKind: "thesis", targetId: thesis.id).environmentObject(store)
+        }
     }
 
     private var initials: String {

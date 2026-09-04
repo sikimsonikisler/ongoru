@@ -1,43 +1,43 @@
 import Foundation
 
-struct IndexTheme: Identifiable, Hashable {
-    var id: String { name }
-    var name: String
-    var symbol: String
+struct TopicReading: Identifiable, Hashable {
+    var id: String { topic.rawValue }
+    var topic: IndexTopic
     var current: Double      // 0...100 — kalabalığın bu beklentiye verdiği olasılık
-    var delta: Double        // son 7 gündeki değişim (puan)
+    var delta: Double        // son 7 gündeki değişim (olasılık puanı)
     var marketIds: [String]
     var series: [PricePoint]
-    /// Yükselmesi iyimserlik mi demek
-    var optimisticWhenUp: Bool
+
+    var name: String { topic.title }
+    var optimisticWhenUp: Bool { topic.optimisticWhenUp }
 }
 
 struct CategoryMood: Identifiable, Hashable {
     var id: String { category.rawValue }
     var category: Category
-    var activity: Int        // toplam işlem
-    var movement: Double     // ortalama mutlak 7 günlük hareket
+    var activity: Int
+    var movement: Double
     var markets: Int
 }
 
 struct ExpectationSnapshot {
-    var composite: Double = 50      // 0–100 iyimserlik bileşiği
+    var composite: Double = 50
     var compositeDelta: Double = 0
-    var themes: [IndexTheme] = []
+    var topics: [TopicReading] = []
     var moods: [CategoryMood] = []
     var totalVolume: Int = 0
     var totalParticipants: Int = 0
 
-    var rising: [IndexTheme] { themes.filter { $0.delta > 0 }.sorted { $0.delta > $1.delta } }
-    var falling: [IndexTheme] { themes.filter { $0.delta < 0 }.sorted { $0.delta < $1.delta } }
+    var rising: [TopicReading] { topics.filter { $0.delta > 0 }.sorted { $0.delta > $1.delta } }
+    var falling: [TopicReading] { topics.filter { $0.delta < 0 }.sorted { $0.delta < $1.delta } }
 
     var mood: String {
         switch composite {
-        case 62...:   return "İyimser"
-        case 54..<62: return "Ölçülü iyimser"
-        case 46..<54: return "Kararsız"
-        case 38..<46: return "Temkinli"
-        default:      return "Karamsar"
+        case 62...:   return L("İyimser", "Optimistic")
+        case 54..<62: return L("Ölçülü iyimser", "Cautiously optimistic")
+        case 46..<54: return L("Kararsız", "Undecided")
+        case 38..<46: return L("Temkinli", "Guarded")
+        default:      return L("Karamsar", "Pessimistic")
         }
     }
 }
@@ -58,42 +58,34 @@ enum ExpectationIndexEngine {
         snap.totalVolume = markets.reduce(0) { $0 + $1.volume }
         snap.totalParticipants = markets.reduce(0) { $0 + $1.participants }
 
-        // Başlıklar
-        let grouped = Dictionary(grouping: live.filter { $0.indexTheme != nil }) { $0.indexTheme! }
-        snap.themes = grouped.map { name, group in
-            let current = group.map(\.priceYes).reduce(0, +) / Double(group.count) * 100
-            let delta = group.map { $0.changeSince(window) }.reduce(0, +) / Double(group.count)
-            let inverted = group.first?.indexInverted ?? false
-            return IndexTheme(
-                name: name,
-                symbol: group.first?.category.icon ?? "circle",
-                current: current,
-                delta: delta,
+        let grouped = Dictionary(grouping: live.filter { $0.topic != nil }) { $0.topic! }
+        snap.topics = grouped.map { topic, group in
+            TopicReading(
+                topic: topic,
+                current: group.map(\.priceYes).reduce(0, +) / Double(group.count) * 100,
+                delta: group.map { $0.changeSince(window) }.reduce(0, +) / Double(group.count),
                 marketIds: group.map(\.id),
-                series: mergedSeries(group),
-                optimisticWhenUp: !inverted
-            )
+                series: mergedSeries(group))
         }
         .sorted { abs($0.delta) > abs($1.delta) }
 
-        // Bileşik iyimserlik: ters başlıklarda (1 − p) katkı verir
+        // Bileşik iyimserlik: karamsarlık yönündeki başlıklar (1 − p) katkı verir
         let contributions = live.compactMap { m -> Double? in
-            guard m.indexTheme != nil else { return nil }
-            return m.indexInverted ? (1 - m.priceYes) : m.priceYes
+            guard let topic = m.topic else { return nil }
+            return topic.optimisticWhenUp ? m.priceYes : (1 - m.priceYes)
         }
         if !contributions.isEmpty {
             snap.composite = contributions.reduce(0, +) / Double(contributions.count) * 100
         }
         let deltas = live.compactMap { m -> Double? in
-            guard m.indexTheme != nil else { return nil }
+            guard let topic = m.topic else { return nil }
             let d = m.changeSince(window)
-            return m.indexInverted ? -d : d
+            return topic.optimisticWhenUp ? d : -d
         }
         if !deltas.isEmpty {
             snap.compositeDelta = deltas.reduce(0, +) / Double(deltas.count)
         }
 
-        // Kategori nabzı
         snap.moods = Category.allCases.compactMap { cat in
             let subset = live.filter { $0.category == cat }
             guard !subset.isEmpty else { return nil }
@@ -101,8 +93,7 @@ enum ExpectationIndexEngine {
                 category: cat,
                 activity: subset.reduce(0) { $0 + $1.volume },
                 movement: subset.map { abs($0.changeSince(window)) }.reduce(0, +) / Double(subset.count),
-                markets: subset.count
-            )
+                markets: subset.count)
         }
         .sorted { $0.activity > $1.activity }
 

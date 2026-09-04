@@ -11,6 +11,7 @@ final class AppStore: ObservableObject {
     @Published var toast: String?
 
     let assistant: InsightProviding = HeuristicAssistant()
+    let auth = AuthService()
 
     private var timer: AnyCancellable?
     private var saveWork: DispatchWorkItem?
@@ -20,10 +21,12 @@ final class AppStore: ObservableObject {
             state = saved
         } else {
             state = AppState.empty
+            I18N.lang = state.language.resolved
             state.markets = SeedMarkets.all.map { StateBuilder.market(from: $0, now: Date()) }
             state.traders = SeedPeople.traders
             state.theses = StateBuilder.theses(now: Date())
         }
+        I18N.lang = state.language.resolved
         refreshDerived()
         if preview { state.onboarded = true }
     }
@@ -52,7 +55,6 @@ final class AppStore: ObservableObject {
         scheduleSave()
     }
 
-    /// Rakiplerin puanları da hafifçe oynasın — lig canlı görünsün.
     private func driftTraders() {
         guard !state.traders.isEmpty else { return }
         for _ in 0..<2 {
@@ -79,18 +81,37 @@ final class AppStore: ObservableObject {
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 
-    // MARK: - Onboarding
+    /// Aşağı çekerek yenileme — kalabalığı bir tik ileri alır.
+    func refreshNow() {
+        MarketSimulator.tick(markets: &state.markets)
+        index = ExpectationIndexEngine.snapshot(markets: state.markets)
+        scheduleSave()
+    }
 
-    func completeOnboarding(name: String, withSampleRecord: Bool) {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        state.me.name = trimmed.isEmpty ? "Sen" : trimmed
-        state.me.handle = (trimmed.isEmpty ? "sen" : trimmed.lowercased()
-            .replacingOccurrences(of: " ", with: "")
-            .folding(options: .diacriticInsensitive, locale: .current))
+    // MARK: - Dil
+
+    var language: AppLanguage { state.language }
+
+    func setLanguage(_ lang: AppLanguage) {
+        state.language = lang
+        I18N.lang = lang.resolved
+        Haptics.select()
+        Persistence.save(state)
+    }
+
+    // MARK: - Hesap
+
+    var account: Account? { state.account }
+
+    /// Girişten sonra hesabı bağlar ve oturumu başlatır.
+    func completeSignIn(account: Account, withSampleRecord sample: Bool) {
+        state.account = account
+        state.me.name = account.displayName
+        state.me.handle = Self.handle(from: account.displayName)
         state.onboarded = true
         state.seasonStart = Date()
 
-        if withSampleRecord {
+        if sample {
             let now = Date()
             state.settlements = SeedPeople.settlements.map { StateBuilder.settlement(from: $0, now: now) }
             state.me.cash = StateBuilder.demoStartingCash
@@ -101,7 +122,44 @@ final class AppStore: ObservableObject {
             state.me.cash = AppState.startingCash
         }
         refreshDerived()
+        Haptics.success()
         Persistence.save(state)
+    }
+
+    func signOut() {
+        stop()
+        Persistence.wipe()
+        var fresh = AppState.empty
+        fresh.language = state.language
+        fresh.markets = SeedMarkets.all.map { StateBuilder.market(from: $0, now: Date()) }
+        fresh.traders = SeedPeople.traders
+        fresh.theses = StateBuilder.theses(now: Date())
+        state = fresh
+        refreshDerived()
+        start()
+    }
+
+    func rename(_ newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        let check = ContentModerator.check(trimmed, kind: .displayName)
+        guard !check.isBlocked else {
+            toast = check.title
+            Haptics.error()
+            return
+        }
+        state.me.name = trimmed
+        state.me.handle = Self.handle(from: trimmed)
+        state.account?.displayName = trimmed
+        Persistence.save(state)
+    }
+
+    private static func handle(from name: String) -> String {
+        let base = name.lowercased(with: Locale(identifier: "tr_TR"))
+            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US"))
+            .replacingOccurrences(of: " ", with: "")
+            .filter { $0.isLetter || $0.isNumber }
+        return base.isEmpty ? "kullanici" : String(base.prefix(18))
     }
 
     // MARK: - Türetilmiş veriler
@@ -157,11 +215,13 @@ final class AppStore: ObservableObject {
     }
 
     var settlements: [Settlement] { state.settlements.sorted { $0.date > $1.date } }
-
     var trades: [Trade] { state.trades.sorted { $0.date > $1.date } }
+    var proposals: [MarketProposal] { state.proposals.sorted { $0.createdAt > $1.createdAt } }
 
     func theses(for marketId: String) -> [Thesis] {
-        state.theses.filter { $0.marketId == marketId }
+        state.theses
+            .filter { $0.marketId == marketId }
+            .filter { !state.hiddenThesisIds.contains($0.id) }
             .sorted { ($0.upvotes + $0.quality * 2) > ($1.upvotes + $1.quality * 2) }
     }
 
@@ -197,12 +257,13 @@ final class AppStore: ObservableObject {
         var all: [Rank] = state.traders.map {
             Rank(id: $0.id, name: $0.name, handle: $0.handle, points: $0.cash, score: $0.score,
                  accuracy: $0.accuracy, resolved: $0.resolvedCount, streak: $0.streak,
-                 title: $0.title, isMe: false, position: 0)
+                 title: $0.title?.s, isMe: false, position: 0)
         }
         all.append(Rank(id: "me", name: state.me.name, handle: state.me.handle,
                         points: totalPoints, score: scoreCard.score, accuracy: scoreCard.accuracy,
                         resolved: scoreCard.resolved, streak: scoreCard.streak,
-                        title: scoreCard.resolved > 0 ? scoreCard.grade : "Yeni", isMe: true, position: 0))
+                        title: scoreCard.resolved > 0 ? scoreCard.grade : L("Yeni", "New"),
+                        isMe: true, position: 0))
 
         switch kind {
         case .points: all.sort { $0.points > $1.points }
@@ -221,17 +282,17 @@ final class AppStore: ObservableObject {
         guard let idx = state.markets.firstIndex(where: { $0.id == marketId }) else { return nil }
         var market = state.markets[idx]
         guard market.isTradable else {
-            if !silent { toast = "Bu piyasa işleme kapalı." }
+            if !silent { toast = L("Bu piyasa işleme kapalı.", "This market is closed for trading.") }
             return nil
         }
         guard budget > 0, budget <= state.me.cash + 0.01 else {
-            if !silent { toast = "Yetersiz puan." }
+            if !silent { toast = L("Yetersiz puan.", "Not enough points."); Haptics.error() }
             return nil
         }
 
         let shares = LMSR.shares(forBudget: budget, market: market, side: side)
         guard shares > 0.01 else {
-            if !silent { toast = "Miktar çok küçük." }
+            if !silent { toast = L("Miktar çok küçük.", "Amount is too small.") }
             return nil
         }
         let cost = LMSR.tradeCost(market: market, side: side, shares: shares)
@@ -252,7 +313,9 @@ final class AppStore: ObservableObject {
         state.trades.append(trade)
 
         if !silent {
-            toast = "\(Fmt.puan(shares, decimals: 0)) sözleşme · \(side.title) · ort. \(Fmt.cents(avg))"
+            Haptics.success()
+            toast = L("\(Fmt.puan(shares)) sözleşme · \(side.title) · ort. \(Fmt.cents(avg))",
+                      "\(Fmt.puan(shares)) contracts · \(side.title) · avg \(Fmt.cents(avg))")
         }
         scheduleSave()
         return trade
@@ -263,7 +326,10 @@ final class AppStore: ObservableObject {
         guard let idx = state.markets.firstIndex(where: { $0.id == marketId }),
               let pos = position(for: marketId), let side = pos.netSide else { return nil }
         var market = state.markets[idx]
-        guard market.isTradable else { toast = "Bu piyasa işleme kapalı."; return nil }
+        guard market.isTradable else {
+            toast = L("Bu piyasa işleme kapalı.", "This market is closed for trading.")
+            return nil
+        }
 
         let shares = pos.shares * min(max(fraction, 0), 1)
         guard shares > 0.01 else { return nil }
@@ -282,7 +348,9 @@ final class AppStore: ObservableObject {
         state.trades.append(Trade(marketId: marketId, marketQuestion: market.question,
                                   category: market.category, side: side, action: .sell,
                                   shares: shares, avgPrice: avg, puan: -proceeds, date: Date()))
-        toast = "Pozisyon kapatıldı · \(Fmt.puan(proceeds)) puan"
+        Haptics.success()
+        toast = L("Pozisyon kapatıldı · \(Fmt.puan(proceeds)) puan",
+                  "Position closed · \(Fmt.puan(proceeds)) points")
         scheduleSave()
         return proceeds
     }
@@ -309,13 +377,17 @@ final class AppStore: ObservableObject {
         Persistence.save(state)
 
         let payout = state.me.cash - before
-        let sonuc = outcome ? "EVET" : "HAYIR"
+        let result = outcome ? L("EVET", "YES") : L("HAYIR", "NO")
         if let last = state.settlements.last, last.marketId == marketId {
+            Haptics.success()
             toast = last.correct
-                ? "Sonuç \(sonuc) · haklı çıktın, \(Fmt.puan(payout)) puan ödendi"
-                : "Sonuç \(sonuc) · yanıldın, \(Fmt.puan(last.invested)) puan gitti"
+                ? L("Sonuç \(result) · haklı çıktın, \(Fmt.puan(payout)) puan ödendi",
+                    "Result \(result) · you were right, \(Fmt.puan(payout)) points paid")
+                : L("Sonuç \(result) · yanıldın, \(Fmt.puan(last.invested)) puan gitti",
+                    "Result \(result) · you were wrong, \(Fmt.puan(last.invested)) points lost")
         } else {
-            toast = "Sonuç \(sonuc) · bu piyasada pozisyonun yoktu"
+            toast = L("Sonuç \(result) · bu piyasada pozisyonun yoktu",
+                      "Result \(result) · you had no position here")
         }
     }
 
@@ -336,7 +408,6 @@ final class AppStore: ObservableObject {
         let payout = correct ? shares * 100 : 0
         state.me.cash += payout
 
-        // Giriş anındaki EVET olasılığım
         let myAvg = pos.avgPrice(for: side)
         let entryYes = side == .yes ? myAvg : 1 - myAvg
 
@@ -349,22 +420,35 @@ final class AppStore: ObservableObject {
 
     // MARK: - Gerekçeler
 
-    @discardableResult
-    func postThesis(marketId: String, side: Side, text: String, sources: [EvidenceSource]) -> Thesis? {
-        guard let m = market(id: marketId) else { return nil }
+    /// Moderasyondan geçerse yayımlar. Engellenirse `nil` döner ve sebebi
+    /// çağıran tarafa `result` ile bildirilir.
+    func postThesis(marketId: String, side: Side, text: String,
+                    sources: [EvidenceSource]) -> (thesis: Thesis?, moderation: ModerationResult) {
+        let verdict = ContentModerator.check(text, kind: .thesis)
+        guard !verdict.isBlocked else {
+            Haptics.error()
+            return (nil, verdict)
+        }
+        guard let m = market(id: marketId) else { return (nil, verdict) }
+
         let t = Thesis(marketId: marketId, authorId: "me", authorName: state.me.name,
                        authorScore: scoreCard.score, side: side, priceAtPost: m.price(for: side),
-                       text: text, sources: sources, upvotes: 0, date: Date())
+                       text: LText(text), sources: sources, upvotes: 0, date: Date(),
+                       underReview: verdict.severity == .flagged)
         state.theses.append(t)
-        toast = "Gerekçen yayımlandı"
+        Haptics.success()
+        toast = verdict.severity == .flagged
+            ? L("Gerekçen yayımlandı, incelemeye alındı", "Your rationale was published and flagged for review")
+            : L("Gerekçen yayımlandı", "Your rationale was published")
         scheduleSave()
-        return t
+        return (t, verdict)
     }
 
     func toggleUpvote(_ thesisId: String) {
         guard let i = state.theses.firstIndex(where: { $0.id == thesisId }) else { return }
         state.theses[i].iUpvoted.toggle()
         state.theses[i].upvotes += state.theses[i].iUpvoted ? 1 : -1
+        Haptics.tap()
         scheduleSave()
     }
 
@@ -373,9 +457,75 @@ final class AppStore: ObservableObject {
             state.watchlist.remove(at: i)
         } else {
             state.watchlist.append(marketId)
-            toast = "Takibe alındı"
+            toast = L("Takibe alındı", "Added to your watchlist")
         }
+        Haptics.tap()
         scheduleSave()
+    }
+
+    // MARK: - Topluluk piyasaları
+
+    /// Kullanıcının önerdiği piyasayı denetimden geçirip yayına alır.
+    @discardableResult
+    func propose(question: String, detail: String, source: String, category: Category,
+                 closeDate: Date, probability: Double) -> ModerationResult {
+        let combined = question + "\n" + detail
+        let verdict = ContentModerator.check(combined, kind: .marketQuestion)
+
+        var proposal = MarketProposal(
+            question: question.trimmingCharacters(in: .whitespacesAndNewlines),
+            detail: detail.trimmingCharacters(in: .whitespacesAndNewlines),
+            resolutionSource: source.trimmingCharacters(in: .whitespacesAndNewlines),
+            category: category, closeDate: closeDate,
+            initialProbability: probability, createdAt: Date(),
+            status: .review, moderationNote: nil)
+
+        switch verdict.severity {
+        case .blocked:
+            proposal.status = .rejected
+            proposal.moderationNote = verdict.title
+            state.proposals.append(proposal)
+            Haptics.error()
+        case .flagged:
+            proposal.status = .review
+            proposal.moderationNote = verdict.title
+            state.proposals.append(proposal)
+            Haptics.warning()
+            toast = L("Piyasan incelemeye alındı", "Your market was sent for review")
+        case .allowed:
+            let market = StateBuilder.communityMarket(from: proposal, author: state.me.name, now: Date())
+            proposal.status = .live
+            proposal.marketId = market.id
+            state.proposals.append(proposal)
+            state.markets.insert(market, at: 0)
+            Haptics.success()
+            toast = L("Piyasan yayında", "Your market is live")
+        }
+        refreshDerived()
+        Persistence.save(state)
+        return verdict
+    }
+
+    // MARK: - Bildirimler
+
+    func report(targetKind: String, targetId: String, reason: ReportReason, note: String?) {
+        state.reports.append(Report(targetKind: targetKind, targetId: targetId,
+                                    reason: reason, note: note, date: Date()))
+        if targetKind == "thesis" {
+            state.hiddenThesisIds.append(targetId)
+        }
+        Haptics.success()
+        toast = L("Bildirimin alındı, içerik senden gizlendi",
+                  "Report received — the content is now hidden for you")
+        scheduleSave()
+    }
+
+    // MARK: - Destek
+
+    func recordSupport(tier: String) {
+        state.supporterTier = tier
+        Haptics.success()
+        Persistence.save(state)
     }
 
     // MARK: - Asistan
@@ -394,15 +544,5 @@ final class AppStore: ObservableObject {
 
     // MARK: - Sıfırlama
 
-    func resetEverything() {
-        stop()
-        Persistence.wipe()
-        var fresh = AppState.empty
-        fresh.markets = SeedMarkets.all.map { StateBuilder.market(from: $0, now: Date()) }
-        fresh.traders = SeedPeople.traders
-        fresh.theses = StateBuilder.theses(now: Date())
-        state = fresh
-        refreshDerived()
-        start()
-    }
+    func resetEverything() { signOut() }
 }

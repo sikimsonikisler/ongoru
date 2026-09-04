@@ -11,7 +11,10 @@ struct ThesisComposerView: View {
     @State private var newSource = ""
 
     private var market: Market? { store.market(id: marketId) }
-    private var canPost: Bool { text.trimmingCharacters(in: .whitespaces).count >= 15 }
+    private var verdict: ModerationResult { ContentModerator.check(text, kind: .thesis) }
+    private var canPost: Bool {
+        text.trimmingCharacters(in: .whitespaces).count >= 15 && !verdict.isBlocked
+    }
 
     var body: some View {
         NavigationStack {
@@ -20,7 +23,7 @@ struct ThesisComposerView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         VStack(alignment: .leading, spacing: 6) {
                             CategoryBadge(category: market.category)
-                            Text(market.question)
+                            Text(market.question.s)
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(Palette.text)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -28,7 +31,10 @@ struct ThesisComposerView: View {
 
                         HStack(spacing: 8) {
                             ForEach(Side.allCases, id: \.self) { s in
-                                Button { withAnimation(.easeOut(duration: 0.18)) { side = s } } label: {
+                                Button {
+                                    Haptics.select()
+                                    withAnimation(.easeOut(duration: 0.18)) { side = s }
+                                } label: {
                                     Text("\(s.title) · \(Fmt.cents(market.price(for: s)))")
                                         .font(.system(size: 13, weight: .bold))
                                         .foregroundStyle(side == s ? Palette.bg : s.color)
@@ -52,26 +58,29 @@ struct ThesisComposerView: View {
             }
             .background(Palette.bg)
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("Gerekçe yaz")
+            .navigationTitle(L("Gerekçe yaz", "Write a rationale"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Vazgeç") { dismiss() }.foregroundStyle(Palette.muted)
+                    Button(L("Vazgeç", "Cancel")) { dismiss() }.foregroundStyle(Palette.muted)
                 }
             }
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 0) {
                     Divider().overlay(Palette.stroke)
                     Button {
-                        store.postThesis(marketId: marketId, side: side, text: text, sources: sources)
-                        dismiss()
+                        let result = store.postThesis(marketId: marketId, side: side,
+                                                      text: text, sources: sources)
+                        if result.thesis != nil { dismiss() }
                     } label: {
-                        Text("Yayımla")
+                        Text(verdict.isBlocked
+                             ? L("Kurallara takıldı", "Blocked by the rules")
+                             : L("Yayımla", "Publish"))
                             .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(Palette.bg)
+                            .foregroundStyle(canPost ? Palette.bg : Palette.muted)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 15)
-                            .background(canPost ? Palette.accent : Palette.faint)
+                            .background(canPost ? Palette.accent : Palette.surfaceHigh)
                             .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
                     }
                     .buttonStyle(.plain)

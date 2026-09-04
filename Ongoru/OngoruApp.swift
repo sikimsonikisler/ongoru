@@ -13,7 +13,9 @@ struct OngoruApp: App {
                 .environmentObject(store)
                 .preferredColorScheme(.dark)
                 .tint(Palette.accent)
-                .environment(\.locale, Locale(identifier: "tr_TR"))
+                // Sistem bileşenleri (Apple ile Giriş, tarih seçici, paylaşım
+                // sayfası) uygulama içinden seçilen dile uysun.
+                .environment(\.locale, I18N.locale)
         }
         .onChange(of: phase) { _, new in
             switch new {

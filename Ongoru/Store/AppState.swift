@@ -2,19 +2,29 @@ import Foundation
 
 struct AppState: Codable {
     var me: Trader
+    var account: Account? = nil
+    var language: AppLanguage = .system
+
     var markets: [Market] = []
     var traders: [Trader] = []
     var trades: [Trade] = []
     var settlements: [Settlement] = []
     var theses: [Thesis] = []
     var watchlist: [String] = []
+
+    var proposals: [MarketProposal] = []
+    var reports: [Report] = []
+    var hiddenThesisIds: [String] = []
+
     var onboarded: Bool = false
     var seasonStart: Date = Date()
+    /// Destek olduysa hangi kademede — yalnızca rozet ve teşekkür içindir
+    var supporterTier: String? = nil
 
     static let startingCash: Double = 10_000
 
     static var empty: AppState {
-        AppState(me: Trader(id: "me", name: "Sen", handle: "sen", avatarSeed: 0,
+        AppState(me: Trader(id: "me", name: L("Sen", "You"), handle: "sen", avatarSeed: 0,
                             cash: startingCash, score: 50, resolvedCount: 0,
                             correctCount: 0, streak: 0, title: nil, isMe: true))
     }
@@ -40,7 +50,35 @@ enum StateBuilder {
             liquidity: s.b, qYes: spread / 2, qNo: -spread / 2,
             volume: s.volume, participants: s.participants, history: history,
             status: .open, resolvedOutcome: nil, resolvedAt: nil,
-            latentProbability: s.price, indexTheme: s.theme, indexInverted: s.inverted)
+            latentProbability: s.price, topic: s.topic,
+            origin: .seed, authorName: nil)
+    }
+
+    /// Kullanıcının önerdiği piyasa. Düşük likidite: birkaç işlem fiyatı
+    /// belirgin biçimde oynatır, ki yeni piyasada olması gereken de budur.
+    static func communityMarket(from p: MarketProposal, author: String, now: Date) -> Market {
+        let b = 220.0
+        let spread = LMSR.qSpread(forPrice: p.initialProbability, b: b)
+        let history = MarketSimulator.syntheticHistory(
+            points: 24, end: p.initialProbability, volatility: 0.010,
+            span: 2 * 86_400, until: now)
+
+        return Market(
+            id: "community-" + p.id.prefix(8),
+            question: LText(p.question),
+            detail: LText(p.detail),
+            resolutionSource: LText(p.resolutionSource),
+            category: p.category,
+            createdAt: now,
+            closeDate: p.closeDate,
+            liquidity: b,
+            qYes: spread / 2, qNo: -spread / 2,
+            volume: Int.random(in: 40...260),
+            participants: Int.random(in: 3...18),
+            history: history,
+            status: .open, resolvedOutcome: nil, resolvedAt: nil,
+            latentProbability: p.initialProbability, topic: nil,
+            origin: .community, authorName: author)
     }
 
     static func settlement(from s: SettlementSeed, now: Date) -> Settlement {

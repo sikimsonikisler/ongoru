@@ -43,13 +43,34 @@ struct MarketSimulator {
         appendHistory(&m, price: m.priceYes, at: now)
     }
 
+    /// Kaç noktadan sonra seyreltmeye başlanır
+    static let historyCap = 240
+
     static func appendHistory(_ m: inout Market, price: Double, at date: Date) {
         if let last = m.history.last, date.timeIntervalSince(last.t) < 20 {
             m.history[m.history.count - 1] = PricePoint(t: date, p: price)
         } else {
             m.history.append(PricePoint(t: date, p: price))
         }
-        if m.history.count > 180 { m.history.removeFirst(m.history.count - 180) }
+        if m.history.count > historyCap { thin(&m.history) }
+    }
+
+    /// Sınır aşılınca en eski yarıyı seyreltir, baştan kesmez.
+    ///
+    /// Baştan kesmek uygulama birkaç saat açık kaldığında 30 günlük seed
+    /// geçmişini siliyordu; o zaman "son 24 saat" değişimi ve 1A grafiği
+    /// aslında son birkaç dakikayı gösteriyordu. Seyreltme, uzun geçmişi
+    /// düşük çözünürlükte korurken yakın geçmişi tam çözünürlükte bırakır.
+    static func thin(_ history: inout [PricePoint]) {
+        let half = history.count / 2
+        var out: [PricePoint] = []
+        out.reserveCapacity(history.count - half / 2)
+        for (i, point) in history.enumerated() {
+            // En eski yarıda bir noktayı atla, birini tut
+            if i < half, i % 2 == 1, i != 0 { continue }
+            out.append(point)
+        }
+        history = out
     }
 
     /// Kutu-Muller ile standart normal

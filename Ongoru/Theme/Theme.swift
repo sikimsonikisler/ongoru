@@ -32,11 +32,13 @@ extension Font {
 // MARK: - Türkçe sayı biçimleri
 
 enum Fmt {
-    static let tr = Locale(identifier: "tr_TR")
+    /// Sayı ve tarih biçimi etkin dile bağlı: Türkçede binlik "." ondalık ",",
+    /// İngilizcede tersi.
+    static var loc: Locale { I18N.locale }
 
     static func puan(_ v: Double, decimals: Int = 0) -> String {
         let f = NumberFormatter()
-        f.locale = tr
+        f.locale = loc
         f.numberStyle = .decimal
         f.maximumFractionDigits = decimals
         f.minimumFractionDigits = decimals
@@ -58,37 +60,42 @@ enum Fmt {
 
     static func decimal(_ v: Double, decimals: Int = 1) -> String { puan(v, decimals: decimals) }
 
-    static func pct(_ p: Double) -> String { "%\(Int((p * 100).rounded()))" }
+    /// Türkçede yüzde işareti sayıdan önce gelir: %63 / 63%
+    static func pct(_ p: Double) -> String { pctInt(Int((p * 100).rounded())) }
+
+    static func pctInt(_ v: Int) -> String {
+        I18N.lang == .tr ? "%\(v)" : "\(v)%"
+    }
 
     static func compact(_ v: Int) -> String {
         switch v {
         case 1_000_000...: return puan(Double(v) / 1_000_000, decimals: 1) + "M"
-        case 1_000...:     return puan(Double(v) / 1_000, decimals: 1) + "B"
+        case 1_000...:     return puan(Double(v) / 1_000, decimals: 1) + L("B", "K")
         default:           return int(v)
         }
     }
 
     static func relative(_ date: Date) -> String {
         let f = RelativeDateTimeFormatter()
-        f.locale = tr
+        f.locale = loc
         f.unitsStyle = .short
         return f.localizedString(for: date, relativeTo: Date())
     }
 
     static func shortDate(_ date: Date) -> String {
         let f = DateFormatter()
-        f.locale = tr
+        f.locale = loc
         f.dateFormat = "d MMM yyyy"
         return f.string(from: date)
     }
 
     static func kalan(_ date: Date) -> String {
         let days = Calendar.current.dateComponents([.day], from: Date(), to: date).day ?? 0
-        if days < 0 { return "kapandı" }
-        if days == 0 { return "bugün kapanıyor" }
-        if days == 1 { return "1 gün" }
-        if days < 30 { return "\(days) gün" }
+        if days < 0 { return L("kapandı", "closed") }
+        if days == 0 { return L("bugün kapanıyor", "closes today") }
+        if days == 1 { return L("1 gün", "1 day") }
+        if days < 30 { return L("\(days) gün", "\(days) days") }
         let months = days / 30
-        return "\(months) ay"
+        return L("\(months) ay", months == 1 ? "1 month" : "\(months) months")
     }
 }

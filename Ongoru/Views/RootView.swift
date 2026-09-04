@@ -11,24 +11,24 @@ struct RootView: View {
             if store.state.onboarded {
                 TabView(selection: $tab) {
                     MarketsView()
-                        .tabItem { Label("Piyasalar", systemImage: "chart.bar.doc.horizontal") }
+                        .tabItem { Label(L("Piyasalar", "Markets"), systemImage: "chart.bar.doc.horizontal") }
                         .tag(0)
                     IndexView()
-                        .tabItem { Label("Endeks", systemImage: "waveform.path.ecg") }
+                        .tabItem { Label(L("Endeks", "Index"), systemImage: "waveform.path.ecg") }
                         .tag(1)
                     PortfolioView()
-                        .tabItem { Label("Portföy", systemImage: "briefcase") }
+                        .tabItem { Label(L("Portföy", "Portfolio"), systemImage: "briefcase") }
                         .tag(2)
                     LeagueView()
-                        .tabItem { Label("Lig", systemImage: "trophy") }
+                        .tabItem { Label(L("Lig", "League"), systemImage: "trophy") }
                         .tag(3)
                     ProfileView()
-                        .tabItem { Label("Sicil", systemImage: "person.crop.circle") }
+                        .tabItem { Label(L("Sicil", "Record"), systemImage: "person.crop.circle") }
                         .tag(4)
                 }
                 .transition(.opacity)
             } else {
-                OnboardingView()
+                AuthView()
                     .transition(.opacity)
             }
 
@@ -42,15 +42,49 @@ struct RootView: View {
                 .allowsHitTesting(false)
             }
         }
+        // Dil değişince tüm ağaç yeniden kurulsun; `L(...)` gövde
+        // değerlendirmesi sırasında okunduğu için bu şart.
+        .id(store.language)
         .animation(.easeInOut(duration: 0.28), value: store.state.onboarded)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: store.toast)
         .onAppear { store.start() }
         .onChange(of: store.toast) { _, new in
             guard new != nil else { return }
             Task {
-                try? await Task.sleep(nanoseconds: 2_200_000_000)
+                try? await Task.sleep(nanoseconds: 2_400_000_000)
                 if store.toast == new { store.toast = nil }
             }
         }
+    }
+}
+
+// MARK: - Dil seçici (her yerde kullanılabilir)
+
+struct LanguageMenu: View {
+    @EnvironmentObject var store: AppStore
+
+    var body: some View {
+        Menu {
+            Picker("", selection: Binding(
+                get: { store.language },
+                set: { store.setLanguage($0) }
+            )) {
+                ForEach(AppLanguage.allCases) { lang in
+                    // Seçim işaretini Picker kendisi koyar; ayrıca ikon
+                    // eklersek çift tik görünüyor.
+                    Text(lang.label).tag(lang)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "globe").font(.system(size: 12, weight: .semibold))
+                Text(store.language == .system
+                     ? store.language.resolved.rawValue.uppercased()
+                     : store.language.rawValue.uppercased())
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .foregroundStyle(Palette.muted)
+        }
+        .accessibilityLabel(L("Dil seç", "Choose language"))
     }
 }

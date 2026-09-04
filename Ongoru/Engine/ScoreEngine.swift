@@ -16,7 +16,10 @@ struct CalibrationBucket: Identifiable, Hashable {
     var count: Int
     var hitRate: Double     // gerçekleşme oranı
     var id: Int { lower }
-    var label: String { "%\(lower)–\(upper)" }
+    /// Türkçede yüzde işareti önde, İngilizcede arkada
+    var label: String {
+        I18N.lang == .tr ? "%\(lower)–\(upper)" : "\(lower)–\(upper)%"
+    }
     var midpoint: Double { Double(lower + upper) / 200 }
 }
 
@@ -41,12 +44,12 @@ struct ScoreCard {
 
     var grade: String {
         switch score {
-        case 80...:  return "Kâhin"
-        case 70..<80: return "Keskin"
-        case 60..<70: return "İyi"
-        case 50..<60: return "Ortalama"
-        case 40..<50: return "Zayıf"
-        default:      return "Yazı tura"
+        case 80...:   return L("Kâhin", "Oracle")
+        case 70..<80: return L("Keskin", "Sharp")
+        case 60..<70: return L("İyi", "Good")
+        case 50..<60: return L("Ortalama", "Average")
+        case 40..<50: return L("Zayıf", "Weak")
+        default:      return L("Yazı tura", "Coin flip")
         }
     }
 }

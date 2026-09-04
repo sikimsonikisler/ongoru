@@ -5,6 +5,7 @@ struct ProfileView: View {
     @EnvironmentObject var store: AppStore
     @State private var showSettings = false
     @State private var showResolver = false
+    @State private var showSupport = false
 
     private var card: ScoreCard { store.scoreCard }
 
@@ -19,24 +20,31 @@ struct ProfileView: View {
                     if card.shortTerm.n > 0 || card.longTerm.n > 0 { horizonBlock }
                     if card.calibration.count >= 2 { calibrationBlock }
                     insights
+                    myProposals
                     myTheses
+                    supportBanner
                     Color.clear.frame(height: 20)
                 }
                 .padding(.horizontal, 14)
                 .padding(.top, 4)
             }
             .background(Palette.bg)
-            .navigationTitle("Sicil")
+            .navigationTitle(L("Sicil", "Record"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: {
                         Image(systemName: "gearshape").font(.system(size: 15))
                     }
+                    .accessibilityLabel(L("Ayarlar", "Settings"))
                 }
             }
-            .sheet(isPresented: $showSettings) { SettingsSheet(showResolver: $showResolver) }
-            .sheet(isPresented: $showResolver) { ResolverSheet() }
+            .sheet(isPresented: $showSettings) {
+                SettingsSheet(showResolver: $showResolver, showSupport: $showSupport)
+                    .environmentObject(store)
+            }
+            .sheet(isPresented: $showResolver) { ResolverSheet().environmentObject(store) }
+            .sheet(isPresented: $showSupport) { SupportView().environmentObject(store) }
         }
     }
 
@@ -48,15 +56,28 @@ struct ProfileView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(store.me.name).font(.system(size: 18, weight: .bold))
                     .foregroundStyle(Palette.text)
-                Text("@\(store.me.handle)").font(.system(size: 12))
-                    .foregroundStyle(Palette.faint)
+                HStack(spacing: 6) {
+                    Text("@\(store.me.handle)").font(.system(size: 12))
+                        .foregroundStyle(Palette.faint)
+                    if let provider = store.account?.provider {
+                        HStack(spacing: 3) {
+                            Image(systemName: provider.icon).font(.system(size: 8))
+                            Text(provider.label).font(.system(size: 9))
+                        }
+                        .foregroundStyle(Palette.faint)
+                    }
+                }
                 HStack(spacing: 5) {
                     Text(card.grade).font(.system(size: 10, weight: .bold))
                         .foregroundStyle(Palette.bg)
                         .padding(.horizontal, 7).padding(.vertical, 2)
                         .background(Palette.accent).clipShape(Capsule())
-                    Text("Ligde \(store.myRank). sıra").font(.system(size: 10))
-                        .foregroundStyle(Palette.muted)
+                    Text(L("Ligde \(store.myRank). sıra", "Rank \(store.myRank) in the league"))
+                        .font(.system(size: 10)).foregroundStyle(Palette.muted)
+                    if store.state.supporterTier != nil {
+                        Image(systemName: "heart.fill").font(.system(size: 9))
+                            .foregroundStyle(Palette.no)
+                    }
                 }
             }
             Spacer()
@@ -69,19 +90,22 @@ struct ProfileView: View {
     private var scoreBlock: some View {
         VStack(spacing: 14) {
             HStack(spacing: 18) {
-                ScoreRing(score: card.score, size: 112, label: "ÖNGÖRÜ")
+                ScoreRing(score: card.score, size: 112, label: L("ÖNGÖRÜ", "FORECAST"))
                 VStack(alignment: .leading, spacing: 9) {
-                    Text("Son \(card.resolved) tahminde")
+                    Text(L("Son \(card.resolved) tahminde", "Across \(card.resolved) resolved"))
                         .font(.system(size: 12)).foregroundStyle(Palette.muted)
-                    tally("\(card.correct) doğru", Palette.yes)
-                    tally("\(card.wrong) yanlış", Palette.no)
-                    tally("%\(Int(card.accuracy * 100)) isabet", Palette.text)
+                    tally(L("\(card.correct) doğru", "\(card.correct) right"), Palette.yes)
+                    tally(L("\(card.wrong) yanlış", "\(card.wrong) wrong"), Palette.no)
+                    tally(L("\(Fmt.pctInt(Int(card.accuracy * 100))) isabet",
+                            "\(Fmt.pctInt(Int(card.accuracy * 100))) accurate"), Palette.text)
                 }
                 Spacer()
             }
             Text(card.resolved > 0
-                 ? "Skor puanını değil kalibrasyonunu ölçer: %70 dediğin şeylerin gerçekten %70'i olduysa yüksek çıkar."
-                 : "Henüz sonuçlanmış tahminin yok. İlk piyasan kapandığında skorun oluşmaya başlar.")
+                 ? L("Skor puanını değil kalibrasyonunu ölçer: %70 dediğin şeylerin gerçekten %70'i olduysa yüksek çıkar.",
+                     "The score measures calibration, not points: it is high when the things you called at 70% happened 70% of the time.")
+                 : L("Henüz sonuçlanmış tahminin yok. İlk piyasan kapandığında skorun oluşmaya başlar.",
+                     "No resolved predictions yet. Your score starts forming once your first market closes."))
                 .font(.system(size: 11)).foregroundStyle(Palette.faint)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -98,11 +122,14 @@ struct ProfileView: View {
 
     private var statGrid: some View {
         HStack(spacing: 0) {
-            StatTile(label: "Brier", value: Fmt.decimal(card.brier, decimals: 3),
-                     accent: card.brier < 0.25 ? Palette.yes : Palette.no, sub: "yazı tura 0,250")
-            StatTile(label: "Seri", value: "\(card.streak)", accent: Palette.gold, sub: "doğru üst üste")
-            StatTile(label: "Net kâr", value: Fmt.signed(card.netProfit),
-                     accent: card.netProfit >= 0 ? Palette.yes : Palette.no, sub: "sonuçlananlardan")
+            StatTile(label: L("Brier", "Brier"), value: Fmt.decimal(card.brier, decimals: 3),
+                     accent: card.brier < 0.25 ? Palette.yes : Palette.no,
+                     sub: L("yazı tura 0,250", "coin flip 0.250"))
+            StatTile(label: L("Seri", "Streak"), value: "\(card.streak)", accent: Palette.gold,
+                     sub: L("doğru üst üste", "right in a row"))
+            StatTile(label: L("Net kâr", "Net gain"), value: Fmt.signed(card.netProfit),
+                     accent: card.netProfit >= 0 ? Palette.yes : Palette.no,
+                     sub: L("sonuçlananlardan", "from resolved"))
         }
         .card()
     }
@@ -111,7 +138,8 @@ struct ProfileView: View {
 
     private var categoryBreakdown: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Kategori kırılımı", sub: "hangi konuda gerçekten iyisin")
+            SectionHeader(title: L("Kategori kırılımı", "By category"),
+                          sub: L("hangi konuda gerçekten iyisin", "where you're genuinely good"))
             VStack(spacing: 10) {
                 ForEach(card.categories) { s in
                     VStack(spacing: 5) {
@@ -136,6 +164,7 @@ struct ProfileView: View {
                         }
                         .frame(height: 5)
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
             .card(padding: 14)
@@ -154,15 +183,21 @@ struct ProfileView: View {
 
     private var horizonBlock: some View {
         HStack(spacing: 0) {
-            StatTile(label: "Kısa vade (≤30g)",
-                     value: card.shortTerm.n > 0 ? "%\(Int(card.shortTerm.accuracy * 100))" : "—",
-                     accent: Palette.text, sub: "\(card.shortTerm.n) tahmin")
-            StatTile(label: "Uzun vade (>30g)",
-                     value: card.longTerm.n > 0 ? "%\(Int(card.longTerm.accuracy * 100))" : "—",
-                     accent: Palette.text, sub: "\(card.longTerm.n) tahmin")
-            StatTile(label: "Kalabalığa karşı",
-                     value: card.contrarian.n > 0 ? "\(card.contrarian.correct)/\(card.contrarian.n)" : "—",
-                     accent: Palette.gold, sub: "45¢ altı girişler")
+            StatTile(label: L("Kısa vade (≤30g)", "Short (≤30d)"),
+                     value: card.shortTerm.n > 0
+                        ? Fmt.pctInt(Int(card.shortTerm.accuracy * 100)) : "—",
+                     accent: Palette.text,
+                     sub: L("\(card.shortTerm.n) tahmin", "\(card.shortTerm.n) calls"))
+            StatTile(label: L("Uzun vade (>30g)", "Long (>30d)"),
+                     value: card.longTerm.n > 0
+                        ? Fmt.pctInt(Int(card.longTerm.accuracy * 100)) : "—",
+                     accent: Palette.text,
+                     sub: L("\(card.longTerm.n) tahmin", "\(card.longTerm.n) calls"))
+            StatTile(label: L("Kalabalığa karşı", "Contrarian"),
+                     value: card.contrarian.n > 0
+                        ? "\(card.contrarian.correct)/\(card.contrarian.n)" : "—",
+                     accent: Palette.gold,
+                     sub: L("45¢ altı girişler", "entries below 45¢"))
         }
         .card()
     }
@@ -171,18 +206,18 @@ struct ProfileView: View {
 
     private var calibrationBlock: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Kalibrasyon", sub: "“%70” dediklerinin gerçekten %70'i oldu mu?")
+            SectionHeader(title: L("Kalibrasyon", "Calibration"),
+                          sub: L("“%70” dediklerinin gerçekten %70'i oldu mu?",
+                                 "did the things you called at 70% happen 70% of the time?"))
             VStack(spacing: 10) {
                 Chart {
                     ForEach(card.calibration) { b in
-                        BarMark(x: .value("Dilim", b.label),
-                                y: .value("Gerçekleşme", b.hitRate * 100))
+                        BarMark(x: .value("", b.label), y: .value("", b.hitRate * 100))
                             .foregroundStyle(Palette.accent.opacity(0.85))
                             .cornerRadius(3)
                     }
                     ForEach(card.calibration) { b in
-                        PointMark(x: .value("Dilim", b.label),
-                                  y: .value("Söylenen", b.midpoint * 100))
+                        PointMark(x: .value("", b.label), y: .value("", b.midpoint * 100))
                             .foregroundStyle(Palette.gold)
                             .symbol(.diamond)
                             .symbolSize(70)
@@ -194,7 +229,8 @@ struct ProfileView: View {
                         AxisGridLine().foregroundStyle(Palette.stroke.opacity(0.4))
                         AxisValueLabel {
                             if let n = v.as(Int.self) {
-                                Text("%\(n)").font(.system(size: 9)).foregroundStyle(Palette.faint)
+                                Text(Fmt.pctInt(n)).font(.system(size: 9))
+                                    .foregroundStyle(Palette.faint)
                             }
                         }
                     }
@@ -207,21 +243,30 @@ struct ProfileView: View {
                 .frame(height: 140)
 
                 HStack(spacing: 14) {
-                    legend(Palette.accent, "Gerçekleşme oranı")
-                    legend(Palette.gold, "Senin dediğin")
+                    legend(Palette.accent, L("Gerçekleşme oranı", "Actual rate"))
+                    legend(Palette.gold, L("Senin dediğin", "What you said"))
                     Spacer()
                 }
-                Text(card.bias > 0.05
-                     ? "Ortalama olarak gerçekleşenden \(Int(card.bias * 100)) puan fazla iyimsersin."
-                     : (card.bias < -0.05
-                        ? "Ortalama olarak gerçekleşenden \(Int(abs(card.bias) * 100)) puan fazla temkinlisin."
-                        : "Verdiğin olasılıklar gerçekleşmeyle büyük ölçüde örtüşüyor."))
+                Text(biasText)
                     .font(.system(size: 11)).foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .card(padding: 14)
         }
+    }
+
+    private var biasText: String {
+        let points = Int(abs(card.bias) * 100)
+        if card.bias > 0.05 {
+            return L("Ortalama olarak gerçekleşenden \(points) puan fazla iyimsersin.",
+                     "On average you run \(points) points more optimistic than reality.")
+        } else if card.bias < -0.05 {
+            return L("Ortalama olarak gerçekleşenden \(points) puan fazla temkinlisin.",
+                     "On average you run \(points) points more cautious than reality.")
+        }
+        return L("Verdiğin olasılıklar gerçekleşmeyle büyük ölçüde örtüşüyor.",
+                 "Your stated probabilities line up closely with what happened.")
     }
 
     private func legend(_ color: Color, _ text: String) -> some View {
@@ -238,10 +283,11 @@ struct ProfileView: View {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles").font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Palette.accent)
-                Text("Sicil analizi").font(.system(size: 13, weight: .bold))
+                Text(L("Sicil analizi", "Record analysis")).font(.system(size: 13, weight: .bold))
                     .foregroundStyle(Palette.text)
                 Spacer()
-                Text("cihaz üstü").font(.system(size: 9)).foregroundStyle(Palette.faint)
+                Text(L("cihaz üstü", "on-device")).font(.system(size: 9))
+                    .foregroundStyle(Palette.faint)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Palette.surfaceHigh).clipShape(Capsule())
             }
@@ -250,13 +296,50 @@ struct ProfileView: View {
         .card(padding: 15)
     }
 
+    // MARK: Önerdiğim piyasalar
+
+    @ViewBuilder
+    private var myProposals: some View {
+        if !store.proposals.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(title: L("Önerdiğim piyasalar", "Markets I proposed"),
+                              sub: L("\(store.proposals.count) öneri", "\(store.proposals.count) proposals"))
+                ForEach(store.proposals) { p in
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack(spacing: 6) {
+                            Text(p.status.label)
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(p.status.color)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(p.status.color.opacity(0.13))
+                                .clipShape(Capsule())
+                            CategoryBadge(category: p.category)
+                            Spacer()
+                            Text(Fmt.relative(p.createdAt)).font(.system(size: 10))
+                                .foregroundStyle(Palette.faint)
+                        }
+                        Text(p.question).font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Palette.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let note = p.moderationNote {
+                            Text(note).font(.system(size: 11))
+                                .foregroundStyle(p.status.color)
+                        }
+                    }
+                    .card(padding: 13)
+                }
+            }
+        }
+    }
+
     // MARK: Gerekçelerim
 
     @ViewBuilder
     private var myTheses: some View {
         if !store.myTheses.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeader(title: "Gerekçelerim", sub: "\(store.myTheses.count) yazı")
+                SectionHeader(title: L("Gerekçelerim", "My rationales"),
+                              sub: L("\(store.myTheses.count) yazı", "\(store.myTheses.count) posts"))
                 ForEach(store.myTheses) { t in
                     VStack(alignment: .leading, spacing: 7) {
                         HStack(spacing: 6) {
@@ -267,14 +350,14 @@ struct ProfileView: View {
                             Text(Fmt.relative(t.date)).font(.system(size: 10))
                                 .foregroundStyle(Palette.faint)
                             Spacer()
-                            Text("Kalite \(t.quality)/100").font(.mono(10))
-                                .foregroundStyle(Palette.muted)
+                            Text(L("Kalite \(t.quality)/100", "Quality \(t.quality)/100"))
+                                .font(.mono(10)).foregroundStyle(Palette.muted)
                         }
                         if let m = store.market(id: t.marketId) {
-                            Text(m.question).font(.system(size: 12, weight: .medium))
+                            Text(m.question.s).font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(Palette.muted).lineLimit(2)
                         }
-                        Text(t.text).font(.system(size: 12))
+                        Text(t.text.s).font(.system(size: 12))
                             .foregroundStyle(Palette.text.opacity(0.85)).lineLimit(3)
                     }
                     .card(padding: 13)
@@ -282,155 +365,27 @@ struct ProfileView: View {
             }
         }
     }
-}
 
-// MARK: - Ayarlar
-
-struct SettingsSheet: View {
-    @EnvironmentObject var store: AppStore
-    @Environment(\.dismiss) private var dismiss
-    @Binding var showResolver: Bool
-    @State private var confirmReset = false
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    group("Demo araçları") {
-                        actionRow("bolt.badge.clock", "Bir piyasayı şimdi sonuçlandır",
-                                  "Sonuç açıklandığında ödemenin ve sicilin nasıl güncellendiğini gör.") {
-                            dismiss()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showResolver = true }
-                        }
-                    }
-                    group("Hesap") {
-                        actionRow("arrow.counterclockwise", "Her şeyi sıfırla",
-                                  "Puanlar, pozisyonlar ve sicil silinir; piyasalar yeniden kurulur.",
-                                  tint: Palette.no) { confirmReset = true }
-                    }
-                    group("Öngörü hakkında") {
-                        infoRow("Bu uygulamada gerçek para yoktur. Para yatırma, çekme veya nakde çevirme yoktur; puanlar yalnızca sıralama ve sicil içindir.")
-                        infoRow("Toplulaştırılmış beklentiler yatırım tavsiyesi değildir.")
-                        infoRow("Öngörü Asistanı tamamen cihaz üstünde, kural tabanlı çalışır; hiçbir veri dışarı gönderilmez.")
-                        infoRow("Piyasa fiyatları LMSR otomatik piyasa yapıcısıyla belirlenir; demo kalabalığı fiyatları canlı tutar.")
-                    }
-                }
-                .padding(16)
-            }
-            .background(Palette.bg)
-            .navigationTitle("Ayarlar")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("Kapat") { dismiss() } }
-            }
-            .alert("Her şey sıfırlansın mı?", isPresented: $confirmReset) {
-                Button("Vazgeç", role: .cancel) {}
-                Button("Sıfırla", role: .destructive) { store.resetEverything(); dismiss() }
-            } message: {
-                Text("Puanların, pozisyonların ve sicilin silinecek.")
-            }
-        }
-        .presentationBackground(Palette.bg)
-    }
-
-    private func group<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text(title.uppercased()).font(.system(size: 9, weight: .bold)).kerning(0.7)
-                .foregroundStyle(Palette.faint)
-            content()
-        }
-    }
-
-    private func actionRow(_ icon: String, _ title: String, _ sub: String,
-                           tint: Color = Palette.accent, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private var supportBanner: some View {
+        Button {
+            Haptics.tap()
+            showSupport = true
+        } label: {
             HStack(spacing: 11) {
-                Image(systemName: icon).font(.system(size: 14)).foregroundStyle(tint).frame(width: 24)
+                Image(systemName: "heart.fill").font(.system(size: 14))
+                    .foregroundStyle(Palette.no)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.text)
-                    Text(sub).font(.system(size: 11)).foregroundStyle(Palette.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .multilineTextAlignment(.leading)
+                    Text(L("Öngörü reklamsız", "Öngörü runs ad-free"))
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.text)
+                    Text(L("Nasıl ayakta kaldığını gör", "See how it stays that way"))
+                        .font(.system(size: 11)).foregroundStyle(Palette.faint)
                 }
-                Spacer(minLength: 0)
+                Spacer()
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Palette.faint)
             }
-            .card(padding: 13)
+            .card(padding: 14)
         }
         .buttonStyle(.plain)
-    }
-
-    private func infoRow(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Circle().fill(Palette.faint).frame(width: 4, height: 4).padding(.top, 6)
-            Text(text).font(.system(size: 11)).foregroundStyle(Palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-    }
-}
-
-// MARK: - Demo çözümleyici
-
-struct ResolverSheet: View {
-    @EnvironmentObject var store: AppStore
-    @Environment(\.dismiss) private var dismiss
-
-    private var candidates: [Market] {
-        store.markets.filter { $0.status == .open }
-            .sorted { $0.closeDate < $1.closeDate }
-    }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Bir piyasayı seçip sonucu belirle. Pozisyonun varsa ödeme yapılır ve sicilin güncellenir.")
-                        .font(.system(size: 12)).foregroundStyle(Palette.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    ForEach(candidates.prefix(12)) { m in
-                        VStack(alignment: .leading, spacing: 9) {
-                            HStack {
-                                CategoryBadge(category: m.category)
-                                Spacer()
-                                if store.position(for: m.id) != nil {
-                                    Text("pozisyonun var").font(.system(size: 9, weight: .semibold))
-                                        .foregroundStyle(Palette.gold)
-                                }
-                            }
-                            Text(m.question).font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(Palette.text)
-                                .fixedSize(horizontal: false, vertical: true)
-                            HStack(spacing: 8) {
-                                ForEach(Side.allCases, id: \.self) { s in
-                                    Button {
-                                        store.forceResolve(marketId: m.id, outcome: s == .yes)
-                                        dismiss()
-                                    } label: {
-                                        Text("Sonuç: \(s.title)")
-                                            .font(.system(size: 12, weight: .bold))
-                                            .foregroundStyle(s.color)
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 9)
-                                            .background(s.dimColor)
-                                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-                        .card(padding: 13)
-                    }
-                }
-                .padding(16)
-            }
-            .background(Palette.bg)
-            .navigationTitle("Piyasa sonuçlandır")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Kapat") { dismiss() } } }
-        }
-        .presentationBackground(Palette.bg)
     }
 }

@@ -12,8 +12,8 @@ struct LeagueView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     Picker("", selection: $kind) {
-                        Text("Puan ligi").tag(AppStore.LeagueKind.points)
-                        Text("İsabet ligi").tag(AppStore.LeagueKind.score)
+                        Text(L("Puan ligi", "Points league")).tag(AppStore.LeagueKind.points)
+                        Text(L("İsabet ligi", "Accuracy league")).tag(AppStore.LeagueKind.score)
                     }
                     .pickerStyle(.segmented)
 
@@ -26,7 +26,7 @@ struct LeagueView: View {
                 .padding(.top, 4)
             }
             .background(Palette.bg)
-            .navigationTitle("Türkiye Tahmin Ligi")
+            .navigationTitle(L("Türkiye Tahmin Ligi", "Türkiye Forecast League"))
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) { myRankBar }
         }
@@ -37,8 +37,10 @@ struct LeagueView: View {
             Image(systemName: kind == .points ? "circle.hexagongrid.fill" : "target")
                 .font(.system(size: 12)).foregroundStyle(Palette.gold)
             Text(kind == .points
-                 ? "Sezon puanı: nakit + açık pozisyonların güncel değeri. Sezon başında herkes 10.000 puanla başlar."
-                 : "Öngörü Skoru: verdiğin olasılıkların ne kadar kalibre olduğunu ölçer. 50 = yazı tura, 100 = kusursuz.")
+                 ? L("Sezon puanı: nakit + açık pozisyonların güncel değeri. Sezon başında herkes 10.000 puanla başlar.",
+                     "Season points: cash plus the current value of open positions. Everyone starts each season with 10,000.")
+                 : L("Öngörü Skoru: verdiğin olasılıkların ne kadar kalibre olduğunu ölçer. 50 = yazı tura, 100 = kusursuz.",
+                     "Forecast Score measures how well calibrated your probabilities are. 50 = coin flip, 100 = perfect."))
                 .font(.system(size: 11))
                 .foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -68,7 +70,8 @@ struct LeagueView: View {
                 .font(.mono(r.position == 1 ? 15 : 13, .bold))
                 .foregroundStyle(r.position == 1 ? Palette.gold : Palette.text)
             if kind == .score {
-                Text("%\(Int(r.accuracy * 100)) isabet").font(.system(size: 9))
+                Text(L("\(Fmt.pctInt(Int(r.accuracy * 100))) isabet",
+                       "\(Fmt.pctInt(Int(r.accuracy * 100))) accurate")).font(.system(size: 9))
                     .foregroundStyle(Palette.faint)
             }
         }
@@ -94,7 +97,7 @@ struct LeagueView: View {
                     Text(r.name).font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Palette.text)
                     if r.isMe {
-                        Text("sen").font(.system(size: 8, weight: .bold))
+                        Text(L("sen", "you")).font(.system(size: 8, weight: .bold))
                             .foregroundStyle(Palette.bg)
                             .padding(.horizontal, 5).padding(.vertical, 1)
                             .background(Palette.accent).clipShape(Capsule())
@@ -114,7 +117,7 @@ struct LeagueView: View {
                 Text(kind == .points ? Fmt.puan(r.points) : "\(r.score)")
                     .font(.mono(14, .bold))
                     .foregroundStyle(kind == .score && r.score >= 70 ? Palette.yes : Palette.text)
-                Text(kind == .points ? "puan" : "skor").font(.system(size: 9))
+                Text(kind == .points ? L("puan", "pts") : L("skor", "score")).font(.system(size: 9))
                     .foregroundStyle(Palette.faint)
             }
         }
@@ -126,8 +129,11 @@ struct LeagueView: View {
     }
 
     private func subtitle(_ r: AppStore.Rank) -> String {
-        if r.resolved == 0 { return "@\(r.handle) · henüz sicil yok" }
-        let base = "\(r.resolved) tahmin · %\(Int(r.accuracy * 100)) isabet"
+        if r.resolved == 0 {
+            return L("@\(r.handle) · henüz sicil yok", "@\(r.handle) · no record yet")
+        }
+        let base = L("\(r.resolved) tahmin · \(Fmt.pctInt(Int(r.accuracy * 100))) isabet",
+                     "\(r.resolved) predictions · \(Fmt.pctInt(Int(r.accuracy * 100))) accurate")
         if let t = r.title { return base + " · " + t }
         return base
     }
@@ -139,9 +145,9 @@ struct LeagueView: View {
                     Text("\(mine.position).").font(.mono(14, .bold)).foregroundStyle(Palette.accent)
                     Avatar(initials: initials(mine.name), seed: mine.name.hashValue, size: 28)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Senin sıran").font(.system(size: 11, weight: .semibold))
+                        Text(L("Senin sıran", "Your rank")).font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Palette.text)
-                        Text("\(ranks.count) katılımcı arasında")
+                        Text(L("\(ranks.count) katılımcı arasında", "among \(ranks.count) traders"))
                             .font(.system(size: 9)).foregroundStyle(Palette.faint)
                     }
                     Spacer()
