@@ -277,6 +277,22 @@ grubunu kullanır: `Ongoru/` altına eklenen her dosya otomatik derlemeye girer.
 
 ---
 
+## Sıradaki işler
+
+Kalan her şey [Issues](https://github.com/sikimsonikisler/ongoru/issues)
+altında, her biri kendi başına okunacak şekilde yazıldı. Kabaca sıra:
+
+| # | İş | Neden önemli |
+|---|---|---|
+| [#1](https://github.com/sikimsonikisler/ongoru/issues/1) | Sunucu: durumu API'ye taşı | Kolektif tahmin motoru tek kişilik simülasyonken kolektif değil |
+| [#6](https://github.com/sikimsonikisler/ongoru/issues/6) | Piyasa çözümlemesi gerçek olmalı | Sonuç şu an rastgele; sicil buna güvenmekle anlam kazanıyor |
+| [#2](https://github.com/sikimsonikisler/ongoru/issues/2) | Moderasyon kuyruğu | İşaretlenen içerik ve bildirimler bir yere düşmüyor |
+| [#7](https://github.com/sikimsonikisler/ongoru/issues/7) | Hukuki görüş | Yayına almadan önce |
+| [#3](https://github.com/sikimsonikisler/ongoru/issues/3) [#4](https://github.com/sikimsonikisler/ongoru/issues/4) [#5](https://github.com/sikimsonikisler/ongoru/issues/5) | Apple / Google / StoreKit yapılandırması | Kod hazır, hesap ayarı eksik |
+| [#8](https://github.com/sikimsonikisler/ongoru/issues/8) | Pro'da vaat edilen özellikler | Para alınan şeyin karşılığı olmalı |
+
+---
+
 ## Bilinçli olarak yapılmayanlar
 
 - **Sunucu yok.** Tüm veri cihazda; "kalabalık" simüle ediliyor. Gerçek üründe
